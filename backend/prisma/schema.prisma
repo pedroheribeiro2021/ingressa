@@ -6,3 +6,47 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+model Upload {
+  id         Int      @id @default(autoincrement())
+  filename   String
+  uploadedAt DateTime @default(now())
+  rows       RawRow[]
+}
+
+model Event {
+  id          Int        @id @default(autoincrement())
+  name        String
+  startDate   DateTime?
+  endDate     DateTime?
+  shotgunId   String?    // caso venha identificador
+  categories  Category[]
+  createdAt   DateTime   @default(now())
+}
+
+model Category {
+  id        Int     @id @default(autoincrement())
+  name      String
+  event     Event   @relation(fields: [eventId], references: [id])
+  eventId   Int
+  total     Int
+  sold      Int
+  price     Decimal? @db.Decimal(12,2)
+  lots      Lot[]
+}
+
+model Lot {
+  id         Int      @id @default(autoincrement())
+  name       String
+  category   Category @relation(fields: [categoryId], references: [id])
+  categoryId Int
+  total      Int
+  sold       Int
+}
+
+model RawRow {
+  id        Int      @id @default(autoincrement())
+  upload    Upload   @relation(fields: [uploadId], references: [id])
+  uploadId  Int
+  raw       Json
+}
