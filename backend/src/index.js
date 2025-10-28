@@ -7,6 +7,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const eventsRoute = require("./routes/events");
+app.use("/api/events", eventsRoute);
+
 app.use("/api/upload", uploadRoute);
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
