@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ingressa
+      POSTGRES_PASSWORD: ingressa_pass
+      POSTGRES_DB: ingressa_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:
