@@ -8,6 +8,7 @@ const router = express.Router();
 
 const upload = multer({ dest: "uploads/" });
 
+// 🔹 Upload de planilha
 router.post("/", upload.single("file"), async (req, res) => {
   try {
     const file = req.file;
@@ -22,12 +23,10 @@ router.post("/", upload.single("file"), async (req, res) => {
       workbook = XLSX.readFile(file.path);
     }
 
-    // assumir primeira planilha
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const json = XLSX.utils.sheet_to_json(sheet, { defval: null });
 
-    // salvar upload
     const uploadRec = await prisma.upload.create({
       data: {
         filename: file.originalname,
@@ -36,19 +35,14 @@ router.post("/", upload.single("file"), async (req, res) => {
       include: { rows: true },
     });
 
-    // normalizar baseado no formato Shotgun:
-    // Implementar função que transforma json (cada linha) em categorias, lots, etc.
-    // Exemplo rápido: procurar colunas "Categoria", "Vendidos/Total", "Lot name", "Price"
     const normalized = [];
     for (const row of json) {
-      // Exemplo de mapeamento — ajustar ao layout real da planilha Shotgun:
       const categoria = row["Categoria"] || row["Category"] || row["Tipo"];
       const vendidoTotal =
         row["Vendido/Total"] || row["Sold/Total"] || row["Vendidos"];
       const price = row["Preço"] || row["Price"];
       if (!categoria) continue;
 
-      // parse "500/5000"
       let sold = null,
         total = null;
       if (typeof vendidoTotal === "string" && vendidoTotal.includes("/")) {
@@ -66,7 +60,6 @@ router.post("/", upload.single("file"), async (req, res) => {
       normalized.push({ categoria, sold, total, price });
     }
 
-    // persist normalized: por enquanto criar um EVENT temporário "Import {date}"
     const event = await prisma.event.create({
       data: {
         name: `Import ${new Date().toISOString()}`,
@@ -82,12 +75,49 @@ router.post("/", upload.single("file"), async (req, res) => {
       include: { categories: true },
     });
 
-    // remover arquivo temporário
     fs.unlinkSync(file.path);
     res.json({ uploadId: uploadRec.id, eventId: event.id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "parse_error", details: err.message });
+  }
+});
+
+// 🔹 Listar todos os uploads
+router.get("/", async (req, res) => {
+  try {
+    const uploads = await prisma.upload.findMany({
+      select: {
+        id: true,
+        filename: true,
+        uploadedAt: true,
+        _count: {
+          select: { rows: true },
+        },
+      },
+      orderBy: { uploadedAt: "desc" },
+    });
+
+    res.json(uploads);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "list_error", details: err.message });
+  }
+});
+
+// 🔹 Obter detalhes de um upload específico
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const upload = await prisma.upload.findUnique({
+      where: { id: Number(id) },
+      include: { rows: true },
+    });
+    if (!upload) return res.status(404).json({ error: "Upload not found" });
+    res.json(upload);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "detail_error", details: err.message });
   }
 });
 

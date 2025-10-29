@@ -1,16 +1,16 @@
-require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const uploadRoute = require("./routes/upload");
+require("dotenv").config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const eventsRoute = require("./routes/events");
-app.use("/api/events", eventsRoute);
+const uploadRoutes = require("./routes/upload");
 
-app.use("/api/upload", uploadRoute);
+app.use("/api/events", eventsRoute);
+app.use("/api/uploads", uploadRoutes); // ← ajuste aqui!
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
