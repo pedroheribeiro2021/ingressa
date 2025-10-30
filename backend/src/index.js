@@ -8,9 +8,11 @@ app.use(express.json());
 
 const eventsRoute = require("./routes/events");
 const uploadRoutes = require("./routes/upload");
+const eventDetailsRoute = require("./routes/eventDetails");
 
 app.use("/api/events", eventsRoute);
-app.use("/api/uploads", uploadRoutes); // ← ajuste aqui!
+app.use("/api/uploads", uploadRoutes);
+app.use("/api/events", eventDetailsRoute);
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 

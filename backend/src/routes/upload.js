@@ -35,44 +35,86 @@ router.post("/", upload.single("file"), async (req, res) => {
       include: { rows: true },
     });
 
-    const normalized = [];
-    for (const row of json) {
-      const categoria = row["Categoria"] || row["Category"] || row["Tipo"];
-      const vendidoTotal =
-        row["Vendido/Total"] || row["Sold/Total"] || row["Vendidos"];
-      const price = row["Preço"] || row["Price"];
-      if (!categoria) continue;
+    // 🔹 Nova lógica: consolidar vendas por categoria e lote (formato Shotgun)
+    const normalizedMap = new Map();
 
-      let sold = null,
-        total = null;
-      if (typeof vendidoTotal === "string" && vendidoTotal.includes("/")) {
-        const parts = vendidoTotal.split("/").map((p) => p.replace(/\D/g, ""));
-        sold = parseInt(parts[0] || "0", 10);
-        total = parseInt(parts[1] || "0", 10);
-      } else if (
-        typeof row["Vendidos"] === "number" &&
-        typeof row["Total"] === "number"
-      ) {
-        sold = row["Vendidos"];
-        total = row["Total"];
+    for (const row of json) {
+      const categoria = row["CATEGORIA"]?.trim();
+      const status = row["STATUS"]?.toLowerCase();
+      const nomeCompra = row["NOME DA COMPRA"]?.trim();
+      const dataCompra = row["DATA DA COMPRA"]
+        ? new Date(row["DATA DA COMPRA"])
+        : null;
+      const diaInicial = row["DIA QUE O INGRESSO É VÁLIDO"]
+        ? new Date(row["DIA QUE O INGRESSO É VÁLIDO"])
+        : null;
+      const diaFinal = row["DIA FINAL QUE O INGRESSO É VÁLIDO"]
+        ? new Date(row["DIA FINAL QUE O INGRESSO É VÁLIDO"])
+        : null;
+
+      if (!categoria || !nomeCompra) continue;
+
+      // Tenta identificar o lote a partir do nome da compra
+      const loteMatch = nomeCompra.match(/Lote\s*(\d+)/i);
+      const loteNome = loteMatch ? `Lote ${loteMatch[1]}` : "Lote único";
+
+      // Chave de agrupamento (categoria + lote)
+      const key = `${categoria}__${loteNome}`;
+
+      if (!normalizedMap.has(key)) {
+        normalizedMap.set(key, {
+          categoria,
+          lote: loteNome,
+          sold: 0,
+          total: 0,
+          validCount: 0,
+          invalidCount: 0,
+          dataCompraMaisRecente: dataCompra,
+          diaInicial,
+          diaFinal,
+        });
       }
 
-      normalized.push({ categoria, sold, total, price });
+      const entry = normalizedMap.get(key);
+
+      // Contagem por status
+      if (status === "valid") entry.validCount++;
+      else entry.invalidCount++;
+
+      entry.sold++;
+      entry.total++;
+      if (
+        !entry.dataCompraMaisRecente ||
+        dataCompra > entry.dataCompraMaisRecente
+      )
+        entry.dataCompraMaisRecente = dataCompra;
     }
 
+    // Converter mapa em array
+    const normalized = Array.from(normalizedMap.values());
+
+    // 🔹 Persist normalized como categorias + lotes
     const event = await prisma.event.create({
       data: {
         name: `Import ${new Date().toISOString()}`,
         categories: {
           create: normalized.map((n) => ({
             name: n.categoria,
-            sold: n.sold || 0,
-            total: n.total || 0,
-            price: n.price ? parseFloat(n.price) : null,
+            sold: n.validCount,
+            total: n.total,
+            lots: {
+              create: [
+                {
+                  name: n.lote,
+                  sold: n.validCount,
+                  total: n.total,
+                },
+              ],
+            },
           })),
         },
       },
-      include: { categories: true },
+      include: { categories: { include: { lots: true } } },
     });
 
     fs.unlinkSync(file.path);
