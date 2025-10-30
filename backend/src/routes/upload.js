@@ -93,32 +93,66 @@ router.post("/", upload.single("file"), async (req, res) => {
     // Converter mapa em array
     const normalized = Array.from(normalizedMap.values());
 
-    // 🔹 Persist normalized como categorias + lotes
+    // 🔹 CORREÇÃO: Criar evento primeiro, depois categorias e lotes com upsert
     const event = await prisma.event.create({
       data: {
         name: `Import ${new Date().toISOString()}`,
-        categories: {
-          create: normalized.map((n) => ({
-            name: n.categoria,
-            sold: n.validCount,
-            total: n.total,
-            lots: {
-              create: [
-                {
-                  name: n.lote,
-                  sold: n.validCount,
-                  total: n.total,
-                },
-              ],
-            },
-          })),
-        },
       },
+    });
+
+    // 🔹 Criar categorias e lotes usando upsert para evitar duplicatas
+    for (const n of normalized) {
+      // Usar upsert para categoria
+      const category = await prisma.category.upsert({
+        where: {
+          name_eventId: {
+            name: n.categoria,
+            eventId: event.id,
+          },
+        },
+        update: {
+          // Se a categoria já existir, atualizar os valores
+          sold: { increment: n.validCount },
+          total: { increment: n.total },
+        },
+        create: {
+          name: n.categoria,
+          eventId: event.id,
+          sold: n.validCount,
+          total: n.total,
+        },
+      });
+
+      // Usar upsert para lote
+      await prisma.lot.upsert({
+        where: {
+          name_categoryId: {
+            name: n.lote,
+            categoryId: category.id,
+          },
+        },
+        update: {
+          // Se o lote já existir, atualizar os valores
+          sold: { increment: n.validCount },
+          total: { increment: n.total },
+        },
+        create: {
+          name: n.lote,
+          categoryId: category.id,
+          sold: n.validCount,
+          total: n.total,
+        },
+      });
+    }
+
+    // 🔹 Buscar o evento completo com as relações para retornar
+    const eventWithRelations = await prisma.event.findUnique({
+      where: { id: event.id },
       include: { categories: { include: { lots: true } } },
     });
 
     fs.unlinkSync(file.path);
-    res.json({ uploadId: uploadRec.id, eventId: event.id });
+    res.json({ uploadId: uploadRec.id, eventId: eventWithRelations.id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "parse_error", details: err.message });
@@ -160,6 +194,119 @@ router.get("/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "detail_error", details: err.message });
+  }
+});
+
+// 🔹 Processar upload e gerar categorias/lotes
+router.post("/:uploadId/process", async (req, res) => {
+  const { uploadId } = req.params;
+
+  try {
+    const upload = await prisma.upload.findUnique({
+      where: { id: Number(uploadId) },
+      include: { rows: true },
+    });
+
+    if (!upload) {
+      return res.status(404).json({ error: "upload_not_found" });
+    }
+
+    // 🔹 Buscar evento vinculado ao upload (assumindo o primeiro evento criado)
+    const event = await prisma.event.findFirst({
+      orderBy: { id: "desc" },
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: "event_not_found" });
+    }
+
+    // 🔹 Estrutura de agrupamento
+    const categoryMap = new Map();
+
+    for (const row of upload.rows) {
+      const raw = row.raw;
+
+      const categoryName = raw["CATEGORIA"]?.trim();
+      if (!categoryName) continue;
+
+      const status = (raw["STATUS"] || "").toLowerCase();
+      if (status !== "valid") continue;
+
+      const nomeCompra = raw["NOME DA COMPRA"] || "";
+      const lotMatch = nomeCompra.match(/lote\s*(\d+)/i);
+      const lotName = lotMatch ? `Lote ${lotMatch[1]}` : "Lote Único";
+
+      // 🔹 Agrupar categorias e lotes
+      if (!categoryMap.has(categoryName)) {
+        categoryMap.set(categoryName, new Map());
+      }
+
+      const lotMap = categoryMap.get(categoryName);
+      lotMap.set(lotName, (lotMap.get(lotName) || 0) + 1);
+    }
+
+    let totalCategories = 0;
+    let totalLots = 0;
+    let totalSold = 0;
+
+    // 🔹 Persistir categorias e lotes
+    for (const [categoryName, lots] of categoryMap.entries()) {
+      totalCategories++;
+
+      const category = await prisma.category.upsert({
+        where: { name_eventId: { name: categoryName, eventId: event.id } },
+        update: {},
+        create: {
+          name: categoryName,
+          eventId: event.id,
+          total: 0,
+          sold: 0,
+        },
+      });
+
+      for (const [lotName, soldCount] of lots.entries()) {
+        totalLots++;
+        totalSold += soldCount;
+
+        await prisma.lot.upsert({
+          where: {
+            name_categoryId: { name: lotName, categoryId: category.id },
+          },
+          update: { sold: soldCount, total: soldCount },
+          create: {
+            name: lotName,
+            categoryId: category.id,
+            sold: soldCount,
+            total: soldCount,
+          },
+        });
+
+        await prisma.category.update({
+          where: { id: category.id },
+          data: {
+            sold: { increment: soldCount },
+            total: { increment: soldCount },
+          },
+        });
+      }
+    }
+
+    const summary = {
+      totalCategories,
+      totalLots,
+      totalSold,
+    };
+
+    res.json({
+      eventId: event.id,
+      summary,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "process_error",
+      details: err.message,
+    });
   }
 });
 
