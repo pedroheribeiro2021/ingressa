@@ -100,8 +100,12 @@ router.post("/", upload.single("file"), async (req, res) => {
       },
     });
 
-    // 🔹 Criar categorias e lotes usando upsert para evitar duplicatas
+    // 🔹 CORREÇÃO: Criar categorias e lotes usando upsert com valores ABSOLUTOS (não incrementais)
     for (const n of normalized) {
+      console.log(
+        `Processando: ${n.categoria} - ${n.validCount} ingressos válidos de ${n.total} totais`
+      );
+
       // Usar upsert para categoria
       const category = await prisma.category.upsert({
         where: {
@@ -111,9 +115,9 @@ router.post("/", upload.single("file"), async (req, res) => {
           },
         },
         update: {
-          // Se a categoria já existir, atualizar os valores
-          sold: { increment: n.validCount },
-          total: { increment: n.total },
+          // CORREÇÃO: Atualizar com os valores absolutos, não incrementar
+          sold: n.validCount,
+          total: n.total,
         },
         create: {
           name: n.categoria,
@@ -132,9 +136,9 @@ router.post("/", upload.single("file"), async (req, res) => {
           },
         },
         update: {
-          // Se o lote já existir, atualizar os valores
-          sold: { increment: n.validCount },
-          total: { increment: n.total },
+          // CORREÇÃO: Atualizar com os valores absolutos, não incrementar
+          sold: n.validCount,
+          total: n.total,
         },
         create: {
           name: n.lote,
